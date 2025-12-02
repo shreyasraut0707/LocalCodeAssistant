@@ -1,0 +1,25 @@
+# Placeholder for models directory
+# The trained models will be saved here
+
+## Directory Structure
+models/
+└── codealpaca-finetuned/
+    └── final/
+        └── (model files go here)
+
+## Note
+Model files are not included in Git due to size (713 MB).
+Train your own model using the provided scripts, or download pre-trained model separately.
+
+## Training Your Own Model
+```bash
+# Option 1: One-click
+RUN_CODEALPACA_TRAINING.bat
+
+# Option 2: Manual
+python scripts/download_codealpaca.py
+python scripts/prepare_codealpaca.py
+python scripts/train_codealpaca.py
+```
+
+Training time: ~9-10 hours on GTX 1650 (4GB VRAM)
