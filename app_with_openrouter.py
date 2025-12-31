@@ -105,7 +105,7 @@ def generate_local_reply(user_input):
     
     return result, prompt, decoded
 
-def generate_openrouter(api_key, user_input, model_name, max_tokens=800):
+def generate_openrouter(api_key, user_input, model_name, language="Python", max_tokens=800):
     """Generate code using OpenRouter API"""
     url = "https://openrouter.ai/api/v1/chat/completions"
     
@@ -121,14 +121,14 @@ def generate_openrouter(api_key, user_input, model_name, max_tokens=800):
         "messages": [
             {
                 "role": "system",
-                "content": "You are a code generator. Output ONLY the requested code function. Do not include explanations, markdown formatting, or examples."
+                "content": f"You are a {language} code generator. Output ONLY the requested code function. Do not include explanations, markdown formatting, or examples."
             },
             {
                 "role": "user",
-                "content": f"Write a Python function for: {user_input}\n\nOutput ONLY the function definition."
+                "content": f"Write a {language} function for: {user_input}\n\nOutput ONLY the function definition in {language}."
             }
         ],
-        "max_tokens": 200,
+        "max_tokens": 300,
         "temperature": 0.3,
         "top_p": 0.9
     }
@@ -157,6 +157,62 @@ def generate_openrouter(api_key, user_input, model_name, max_tokens=800):
         raise Exception("Request timed out. Please try again.")
     except Exception as e:
         raise Exception(f"API error: {str(e)}")
+
+def explain_code_openrouter(api_key, code, model_name):
+    """Explain generated code using OpenRouter API"""
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:8501",
+        "X-Title": "LocalCodeAssistant"
+    }
+    
+    data = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a helpful programming teacher. Explain code in simple, clear terms that a beginner can understand. Be concise but thorough."
+            },
+            {
+                "role": "user",
+                "content": f"Explain this code step by step in simple words:\n\n```\n{code}\n```"
+            }
+        ],
+        "max_tokens": 500,
+        "temperature": 0.5
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response.raise_for_status()
+        result = response.json()
+        return result['choices'][0]['message']['content']
+    except Exception as e:
+        raise Exception(f"Explanation error: {str(e)}")
+
+# Supported languages mapping
+LANGUAGE_EXTENSIONS = {
+    "Python": "python",
+    "JavaScript": "javascript",
+    "Java": "java",
+    "C++": "cpp",
+    "C#": "csharp",
+    "Go": "go",
+    "TypeScript": "typescript"
+}
+
+LANGUAGE_FILE_EXT = {
+    "Python": ".py",
+    "JavaScript": ".js",
+    "Java": ".java",
+    "C++": ".cpp",
+    "C#": ".cs",
+    "Go": ".go",
+    "TypeScript": ".ts"
+}
 
 def main():
     """Main Streamlit app"""
@@ -210,6 +266,17 @@ def main():
             
             with st.expander("🔧 Advanced"):
                 max_tokens = st.slider("Max Tokens", 200, 1500, 800, 100)
+            
+            st.divider()
+            
+            # Language Selection (NEW FEATURE)
+            st.subheader("💻 Programming Language")
+            selected_language = st.selectbox(
+                "Select Language",
+                list(LANGUAGE_EXTENSIONS.keys()),
+                index=0,
+                help="Choose your target programming language"
+            )
         
         else:  # Local model
             if load_error:
@@ -220,6 +287,7 @@ def main():
             if device == "cuda":
                 st.success(f"🚀 GPU: {torch.cuda.get_device_name(0)}")
             st.info(f"✅ CodeAlpaca Fine-Tuned Model Loaded!")
+            st.caption("📝 Note: Local model supports Python only")
             
             st.divider()
         
@@ -239,12 +307,24 @@ def main():
         )
         generate_btn = st.button("🚀 Generate Code", type="primary", use_container_width=True)
     
+    # Initialize session state for generated code
+    if "generated_code" not in st.session_state:
+        st.session_state.generated_code = ""
+    if "current_language" not in st.session_state:
+        st.session_state.current_language = "Python"
+    if "show_explanation" not in st.session_state:
+        st.session_state.show_explanation = False
+    if "explanation_text" not in st.session_state:
+        st.session_state.explanation_text = ""
+    
     with col2:
         st.subheader("✨ Generated Code")
         response_container = st.container()
     
     # Generate response
     if generate_btn and user_input.strip():
+        st.session_state.show_explanation = False  # Reset explanation on new generation
+        st.session_state.explanation_text = ""
         
         if "OpenRouter" in mode:
             if not api_key:
@@ -255,58 +335,89 @@ def main():
                 st.warning("⚠️ Please select a valid model")
                 return
             
-            with st.spinner(f"🤖 Generating with {openrouter_model.split('/')[-1].split(':')[0]}..."):
+            with st.spinner(f"🤖 Generating {selected_language} code with {openrouter_model.split('/')[-1].split(':')[0]}..."):
                 try:
-                    response = generate_openrouter(api_key, user_input, openrouter_model, max_tokens)
-                    with response_container:
-                        st.code(response, language="python", line_numbers=True)
-                        st.download_button(
-                            label="📥 Download Code",
-                            data=response,
-                            file_name="generated_code.py",
-                            mime="text/plain",
-                            use_container_width=True
-                        )
+                    response = generate_openrouter(api_key, user_input, openrouter_model, selected_language, max_tokens)
+                    st.session_state.generated_code = response
+                    st.session_state.current_language = selected_language
                 except Exception as e:
                     st.error(f"❌ {str(e)}")
+                    st.session_state.generated_code = ""
         
         else:  # Local model
             with st.spinner("🤖 Generating..."):
                 try:
                     response, _, _ = generate_local_reply(user_input)
-                    with response_container:
-                        st.code(response, language="python", line_numbers=True)
-                        st.download_button(
-                            label="📥 Download Code",
-                            data=response,
-                            file_name="generated_code.py",
-                            mime="text/plain",
-                            use_container_width=True
-                        )
+                    st.session_state.generated_code = response
+                    st.session_state.current_language = "Python"
                 except Exception as e:
                     st.error(f"❌ {str(e)}")
+                    st.session_state.generated_code = ""
     
     elif generate_btn:
         st.warning("⚠️ Please enter a request first!")
     
+    # Display generated code from session state (persists after button clicks)
+    if st.session_state.generated_code:
+        lang = st.session_state.current_language
+        lang_ext = LANGUAGE_EXTENSIONS.get(lang, "python")
+        file_ext = LANGUAGE_FILE_EXT.get(lang, ".py")
+        
+        with response_container:
+            st.code(st.session_state.generated_code, language=lang_ext, line_numbers=True)
+            
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                st.download_button(
+                    label="📥 Download Code",
+                    data=st.session_state.generated_code,
+                    file_name=f"generated_code{file_ext}",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+            with col_btn2:
+                # Explain button - only works with OpenRouter mode
+                if "OpenRouter" in mode and api_key:
+                    if st.button("💡 Explain Code", use_container_width=True):
+                        with st.spinner("🧠 Explaining..."):
+                            try:
+                                explanation = explain_code_openrouter(api_key, st.session_state.generated_code, openrouter_model)
+                                st.session_state.explanation_text = explanation
+                                st.session_state.show_explanation = True
+                            except Exception as ex:
+                                st.error(f"❌ {str(ex)}")
+                else:
+                    st.info("💡 Switch to OpenRouter to explain code")
+            
+            # Show explanation if available
+            if st.session_state.show_explanation and st.session_state.explanation_text:
+                st.divider()
+                st.subheader("📖 Code Explanation")
+                st.markdown(st.session_state.explanation_text)
+    
     # Footer
     st.divider()
-    footer_cols = st.columns(4)
+    footer_cols = st.columns(5)
     
     with footer_cols[0]:
-        st.metric("Mode", "Cloud (FREE)" if "OpenRouter" in mode else "Local")
+        st.metric("Mode", "Cloud" if "OpenRouter" in mode else "Local")
     with footer_cols[1]:
         if "OpenRouter" in mode:
-            st.metric("Model", openrouter_model.split('/')[-1].split(':')[0][:15])
+            st.metric("Model", openrouter_model.split('/')[-1].split(':')[0][:12])
         else:
-            st.metric("Model", "CodeAlpaca-350M")
+            st.metric("Model", "CodeAlpaca")
     with footer_cols[2]:
+        if "OpenRouter" in mode:
+            st.metric("Language", selected_language)
+        else:
+            st.metric("Language", "Python")
+    with footer_cols[3]:
         if "OpenRouter" in mode:
             st.metric("Cost", "$0.00")
         else:
             st.metric("Device", "GPU" if device == "cuda" else "CPU")
-    with footer_cols[3]:
-        st.metric("Status", "🟢 Online" if "OpenRouter" in mode else "🔵 Offline")
+    with footer_cols[4]:
+        st.metric("Status", "🟢" if "OpenRouter" in mode else "🔵")
 
 if __name__ == "__main__":
     main()
